@@ -12,12 +12,26 @@ import pandas as pd
 import torch
 
 import transformers
+from scipy.stats import entropy
 from self_speculation.generator_base import (
     GenerationConfig,
     GenerationStrategy,
     GenerationStrategyResult,
 )
 from self_speculation.llama_model_utils import decode_next_token, forward, forward_early
+
+
+def _cosine_similarity(p: torch.Tensor, q: torch.Tensor, eps=1e-9) -> float:
+    denom = (p.norm(2) * q.norm(2)).item()
+    if denom < eps:
+        return 0.0
+    return float((p.dot(q) / denom).item())
+
+
+def _kl_divergence(p: torch.Tensor, q: torch.Tensor, eps=1e-9) -> float:
+    p_ = p.clamp(min=eps)
+    q_ = q.clamp(min=eps)
+    return float((p_ * (p_.log() - q_.log())).sum().item())
 
 
 class AutoRegressiveGenerationStrategy(GenerationStrategy):
@@ -42,7 +56,15 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
 
         exit_query_cache = None
 
-        all_layer_max_probs = [] if generation_config.analysis else None
+        # We'll store arrays for each metric: [num_layers][steps].
+        max_probs_per_layer = [] if generation_config.analysis else None
+        entropy_per_layer = [] if generation_config.analysis else None
+        cosine_per_layer = [] if generation_config.analysis else None
+        kl_per_layer = [] if generation_config.analysis else None
+        topk_prob_diff_per_layer = [] if generation_config.analysis else None
+
+        num_layers = None
+        k_for_topk = 15
 
         for step in range(generation_config.max_steps):
             if generation_config.exit_layer > 0:
@@ -67,10 +89,69 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
             past_key_values = model_output.past_key_values
 
             # If in analysis mode, collect the list of layer-wise max probabilities
-            if generation_config.analysis and model_output.layer_max_probs is not None:
-                # model_output.layer_max_probs has length = number_of_layers
-                # We'll store it for this decoding step
-                all_layer_max_probs.append(model_output.layer_max_probs)
+            if generation_config.analysis and model_output.partial_probs is not None:
+                if num_layers is None:
+                    num_layers = len(model_output.partial_probs)
+                    # Initialize all metric lists
+                    max_probs_per_layer = [[] for _ in range(num_layers)]
+                    entropy_per_layer = [[] for _ in range(num_layers)]
+                    cosine_per_layer = [[] for _ in range(num_layers)]
+                    kl_per_layer = [[] for _ in range(num_layers)]
+                    topk_prob_diff_per_layer = [[] for _ in range(num_layers)]
+
+                # partial_probs[i] => distribution for layer i
+                # partial_logits[i] => logits for layer i
+                for layer_i in range(num_layers):
+                    p_i = model_output.partial_probs[layer_i]  # shape [vocab_size]
+                    log_i = model_output.partial_logits[
+                        layer_i
+                    ]  # shape [1, vocab_size]
+                    p_max = float(p_i.max().item())
+                    max_probs_per_layer[layer_i].append(p_max)
+
+                    # eps = 1e-9
+                    # p_clamp = p_i.clamp(min=eps)
+                    # ent_val = -(p_clamp * p_clamp.log()).sum().item()
+                    p_i_cpu = p_i.detach().cpu().numpy()
+                    ent_val = entropy(p_i_cpu)
+                    entropy_per_layer[layer_i].append(float(ent_val))
+
+                    if layer_i == 0:
+                        cos_val = 0.0
+                        kl_val = 0.0
+                        topk_diff_val = 0.0
+                    else:
+                        # Cosine
+                        prev_p = model_output.partial_probs[layer_i - 1]
+                        cos_val = _cosine_similarity(p_i, prev_p)
+                        # KL
+                        kl_val = _kl_divergence(p_i, prev_p)
+
+                        # top-k prob diff
+                        prev_log = model_output.partial_logits[
+                            layer_i - 1
+                        ]  # shape [1, vocab_size]
+                        current_log = log_i  # shape [1, vocab_size]
+
+                        current_top_vals, _ = torch.topk(
+                            current_log, k_for_topk, dim=-1
+                        )
+                        last_top_vals, _ = torch.topk(prev_log, k_for_topk, dim=-1)
+
+                        # shape [1, k], do local softmax
+                        current_probs_topk = torch.softmax(current_top_vals, dim=-1)
+                        last_probs_topk = torch.softmax(last_top_vals, dim=-1)
+
+                        # prob_diff ~ average absolute difference
+                        topk_diff_val = (
+                            torch.abs(current_probs_topk - last_probs_topk)
+                            .mean()
+                            .item()
+                        )
+
+                    cosine_per_layer[layer_i].append(cos_val)
+                    kl_per_layer[layer_i].append(kl_val)
+                    topk_prob_diff_per_layer[layer_i].append(topk_diff_val)
 
             next_token, _ = decode_next_token(
                 logits=logits,
@@ -94,8 +175,19 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
             # the KV cache (`past_key_values`) to speed up generation.
             input_ids = torch.tensor([[next_token]]).to(input_ids)
 
+        # Gather final data
+        analysis_data = None
+        if generation_config.analysis and num_layers is not None:
+            analysis_data = {
+                "max_prob": max_probs_per_layer,
+                "entropy": entropy_per_layer,
+                "cosine": cosine_per_layer,
+                "kl_div": kl_per_layer,
+                "topk_prob_diff": topk_prob_diff_per_layer,
+            }
+
         return GenerationStrategyResult(
             predicted_tokens=output_ids,
             acceptance_rate=None,
-            analysis_data=all_layer_max_probs if generation_config.analysis else None,
+            analysis_data=analysis_data if generation_config.analysis else None,
         )

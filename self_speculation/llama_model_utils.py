@@ -28,7 +28,9 @@ class ForwardResult:
     logits: torch.Tensor
     past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]]
     exit_query_cache: Optional[List[torch.Tensor]] = None
-    layer_max_probs: Optional[List[float]] = None
+    # layer_max_probs: Optional[List[float]] = None
+    partial_probs: Optional[List[torch.Tensor]] = None
+    partial_logits: Optional[List[torch.Tensor]] = None
 
 
 @dataclass
@@ -248,7 +250,9 @@ def forward(
 
     hidden_states = inputs_embeds
 
-    layer_max_probs = [] if analysis else None
+    # layer_max_probs = [] if analysis else None
+    partial_probs = [] if analysis else None
+    partial_logits = [] if analysis else None
 
     for decoder_layer in model.model.layers:
         hidden_states, past_key_values = decoder_layer(
@@ -262,23 +266,33 @@ def forward(
         )
 
         if analysis:
+            # 1) partial logits
             partial_hidden_states = model.model.norm(hidden_states)
-            partial_logits = model.lm_head(
+            layer_logits = model.lm_head(
                 partial_hidden_states
-            )  # shape: [bs, seq_len, vocab_size]
-            # We get probabilities for the last token in the sequence
-            partial_probs = torch.softmax(
-                partial_logits[:, -1, :], dim=-1
-            )  # [bs, vocab_size]
-            max_prob = partial_probs.max(dim=-1)[0].item()  # single batch, single float
-            layer_max_probs.append(max_prob)
+            )  # [bs, seq_len, vocab_size]
+            layer_logits_last = layer_logits[:, -1, :]  # shape [bs, vocab_size]
+
+            # 2) partial probs
+            layer_probs = torch.softmax(layer_logits_last, dim=-1).squeeze(
+                0
+            )  # shape [vocab_size]
+            partial_probs.append(layer_probs.detach())  # or .cpu() if you prefer
+
+            # 3) store logits for top-k difference metric
+            partial_logits.append(
+                layer_logits_last.detach()
+            )  # shape [1, vocab_size] if batch=1
 
     past_key_values = past_key_values.to_legacy_cache()
     hidden_states = model.model.norm(hidden_states)
     logits = model.lm_head(hidden_states)
 
     return ForwardResult(
-        logits=logits, past_key_values=past_key_values, layer_max_probs=layer_max_probs
+        logits=logits,
+        past_key_values=past_key_values,
+        partial_probs=partial_probs,
+        partial_logits=partial_logits,
     )
 
 

@@ -19,7 +19,7 @@ class GenerationStrategyResult:
     predicted_tokens: List[int]
     acceptance_rate: Optional[float] = None
     exit_layers: Optional[List[int]] = None
-    analysis_data: Optional[List[List[float]]] = None
+    analysis_data: Optional[dict] = None
 
 
 @dataclass

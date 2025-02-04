@@ -80,29 +80,73 @@ def load_model_and_tokenizer(args: Arguments, device: str = "auto"):
     return model, tokenizer
 
 
-def save_analysis_to_excel(filename: str, all_layer_max_probs: List[List[float]]):
+def _write_metric_sheet(
+    workbook,
+    sheet_name: str,
+    metric_data: List[List[float]],
+    # If you want row=layers, col=tokens, set this True
+    # If you want row=tokens, col=layers, set this False
+    row_layers_col_tokens: bool = False,
+):
     """
-    all_layer_max_probs is shape [T, num_layers]
-    We want to output a spreadsheet with shape (num_layers, T),
-    i.e. each row is a layer, each column is a generation step.
+    metric_data: shape [num_layers][num_steps].
+      - metric_data[layer_i] = list of length = num_steps
+    We create a sheet with an extra row/col as requested:
+      - top-left cell is blank
+      - first row after that: "layer_000", "layer_001", ...
+      - first column after that: f"{sheet_name}_001", f"{sheet_name}_002", ...
+
+    By default below: each row = token index, each column = layer index.
+    If row_layers_col_tokens=True, we would transpose usage.
     """
-    if not all_layer_max_probs:
+    worksheet = workbook.add_worksheet(sheet_name)
+
+    num_layers = len(metric_data)
+    if num_layers == 0:
         return
+    num_tokens = len(metric_data[0])
 
-    # Transpose from [T, L] -> [L, T]
-    # T = number of steps, L = number of layers
-    steps = len(all_layer_max_probs)
-    num_layers = len(all_layer_max_probs[0]) if steps > 0 else 0
+    # 1) Write column headers for the token positions in row=0, col=j+1
+    #    e.g.  sheet_name_000, sheet_name_001, ...
+    worksheet.write(0, 0, "")  # top-left corner empty
+    for j in range(num_tokens):
+        col_label = f"{sheet_name}_{j:03d}"
+        worksheet.write(0, j + 1, col_label)
 
-    # Prepare data in row-major (row=layer, col=step)
-    data_transposed = list(zip(*all_layer_max_probs))  # shape: [num_layers][step]
+    # 2) For each row i => layer i
+    #    First column => "layer_{i:03d}"
+    #    Then fill columns with metric_data[i][j]
+    for i in range(num_layers):
+        row_label = f"layer_{i:03d}"
+        worksheet.write(i + 1, 0, row_label)
 
-    workbook = xlsxwriter.Workbook(filename)
-    worksheet = workbook.add_worksheet()
+        for j in range(num_tokens):
+            val = metric_data[i][j]
 
-    for layer_idx in range(num_layers):
-        for step_idx in range(steps):
-            worksheet.write(layer_idx, step_idx, data_transposed[layer_idx][step_idx])
+            worksheet.write(i + 1, j + 1, val)
+
+
+def save_analysis_to_excel(filename: str, analysis_data: dict):
+    """
+    analysis_data = {
+      'max_prob': [[...], ...],
+      'entropy':  [[...], ...],
+      'cosine':   [[...], ...],
+      'kl_div':   [[...], ...],
+      'topk_prob_diff': [[...], ...],
+      ...
+    }
+    """
+    if not analysis_data:
+        return
+    workbook = xlsxwriter.Workbook(filename, {"nan_inf_to_errors": True})
+
+    # We'll create a sheet for each metric
+    for metric_name in ["max_prob", "entropy", "cosine", "kl_div", "topk_prob_diff"]:
+        if metric_name not in analysis_data:
+            continue
+        metric_data = analysis_data[metric_name]
+        _write_metric_sheet(workbook, metric_name, metric_data)
 
     workbook.close()
 
