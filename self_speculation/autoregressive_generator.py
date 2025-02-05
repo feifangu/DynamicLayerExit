@@ -10,6 +10,7 @@ from typing import List, Optional
 import pandas as pd
 
 import torch
+import torch.nn.functional as F
 
 import transformers
 from scipy.stats import entropy
@@ -28,10 +29,32 @@ def _cosine_similarity(p: torch.Tensor, q: torch.Tensor, eps=1e-9) -> float:
     return float((p.dot(q) / denom).item())
 
 
-def _kl_divergence(p: torch.Tensor, q: torch.Tensor, eps=1e-9) -> float:
-    p_ = p.clamp(min=eps)
-    q_ = q.clamp(min=eps)
-    return float((p_ * (p_.log() - q_.log())).sum().item())
+def _kl_divergence(p: torch.Tensor, q: torch.Tensor, eps: float = 1e-9) -> float:
+    """
+    Computes KL(p || q) = sum( p_i * [log(p_i) - log(q_i)] ), safely:
+      1) Upcast to float32 to avoid half-precision underflow
+      2) Clamp both p,q so none are exactly 0 -> log(0) => -inf
+      3) Sum p_i log(p_i/q_i)
+      4) If the final result is slightly negative from rounding, clamp to 0
+    """
+    # 1) cast
+    p_32 = p.float()
+    q_32 = q.float()
+
+    # 2) clamp to avoid log(0)
+    p_32 = p_32.clamp(min=eps)
+    q_32 = q_32.clamp(min=eps)
+
+    # 3) kl = sum( p_i * (log p_i - log q_i) )
+    #    If p and q sum to 1 over vocab_size, this is the discrete KL(p||q).
+    kl_tensor = p_32 * (torch.log(p_32) - torch.log(q_32))
+    kl_val = kl_tensor.sum().item()
+
+    # 4) Clip negative due to floating rounding
+    if kl_val < 0.0:
+        kl_val = 0.0
+
+    return kl_val
 
 
 class AutoRegressiveGenerationStrategy(GenerationStrategy):
@@ -125,7 +148,7 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
                         prev_p = model_output.partial_probs[layer_i - 1]
                         cos_val = _cosine_similarity(p_i, prev_p)
                         # KL
-                        kl_val = _kl_divergence(p_i, prev_p)
+                        kl_val = _kl_divergence(prev_p, p_i)
 
                         # top-k prob diff
                         prev_log = model_output.partial_logits[
