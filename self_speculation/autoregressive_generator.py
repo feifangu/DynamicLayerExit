@@ -58,6 +58,10 @@ def _kl_divergence(p: torch.Tensor, q: torch.Tensor, eps: float = 1e-9) -> float
 
 
 class AutoRegressiveGenerationStrategy(GenerationStrategy):
+    def __init__(self, tokenizer=None):
+        super().__init__()
+        self.tokenizer = tokenizer
+
     def generate_token_ids(
         self,
         model: transformers.LlamaForCausalLM,
@@ -85,6 +89,7 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
         cosine_per_layer = [] if generation_config.analysis else None
         kl_per_layer = [] if generation_config.analysis else None
         topk_prob_diff_per_layer = [] if generation_config.analysis else None
+        most_likely_tokens_per_layer = [] if generation_config.analysis else None
 
         num_layers = None
         k_for_topk = 15
@@ -121,6 +126,7 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
                     cosine_per_layer = [[] for _ in range(num_layers)]
                     kl_per_layer = [[] for _ in range(num_layers)]
                     topk_prob_diff_per_layer = [[] for _ in range(num_layers)]
+                    most_likely_tokens_per_layer = [[] for _ in range(num_layers)]
 
                 # partial_probs[i] => distribution for layer i
                 # partial_logits[i] => logits for layer i
@@ -138,6 +144,14 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
                     p_i_cpu = p_i.detach().cpu().numpy()
                     ent_val = entropy(p_i_cpu)
                     entropy_per_layer[layer_i].append(float(ent_val))
+
+                    # (3) most likely token: argmax + decode
+                    top_idx = int(p_i.argmax().item())
+                    if self.tokenizer:
+                        top_token_str = self.tokenizer.decode([top_idx])
+                    else:
+                        top_token_str = f"<id:{top_idx}>"
+                    most_likely_tokens_per_layer[layer_i].append(top_token_str)
 
                     if layer_i == 0:
                         cos_val = 0.0
@@ -207,6 +221,7 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
                 "cosine": cosine_per_layer,
                 "kl_div": kl_per_layer,
                 "topk_prob_diff": topk_prob_diff_per_layer,
+                "most_likely_token": most_likely_tokens_per_layer,
             }
 
         return GenerationStrategyResult(

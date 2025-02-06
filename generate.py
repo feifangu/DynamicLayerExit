@@ -134,6 +134,7 @@ def save_analysis_to_excel(filename: str, analysis_data: dict):
       'cosine':   [[...], ...],
       'kl_div':   [[...], ...],
       'topk_prob_diff': [[...], ...],
+      'most_likely_token': [[...], ...],
       ...
     }
     """
@@ -142,7 +143,14 @@ def save_analysis_to_excel(filename: str, analysis_data: dict):
     workbook = xlsxwriter.Workbook(filename, {"nan_inf_to_errors": True})
 
     # We'll create a sheet for each metric
-    for metric_name in ["max_prob", "entropy", "cosine", "kl_div", "topk_prob_diff"]:
+    for metric_name in [
+        "max_prob",
+        "entropy",
+        "cosine",
+        "kl_div",
+        "topk_prob_diff",
+        "most_likely_token",
+    ]:
         if metric_name not in analysis_data:
             continue
         metric_data = analysis_data[metric_name]
@@ -173,7 +181,9 @@ def main(
             raise ValueError(f"Unsupported streamer type {generate_arguments.streamer}")
 
     if generation_config.generation_strategy == "autoregressive":
-        generation_strategy: GenerationStrategy = AutoRegressiveGenerationStrategy()
+        generation_strategy: GenerationStrategy = AutoRegressiveGenerationStrategy(
+            tokenizer=tokenizer
+        )
     elif generation_config.generation_strategy == "self_speculative":
         generation_strategy: GenerationStrategy = SelfSpeculativeGenerationStrategy()
     elif generation_config.generation_strategy == "dynamic_early_exit_first":
