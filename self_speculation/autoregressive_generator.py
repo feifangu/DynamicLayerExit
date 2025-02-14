@@ -215,6 +215,16 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
         # Gather final data
         analysis_data = None
         if generation_config.analysis and num_layers is not None:
+            last_layer_idx = num_layers - 1
+            num_steps = len(most_likely_tokens_per_layer[last_layer_idx])
+
+            equal_final_token_per_layer = [[] for _ in range(num_layers)]
+            for i in range(num_layers):
+                for j in range(num_steps):
+                    token_i = most_likely_tokens_per_layer[i][j]
+                    token_final = most_likely_tokens_per_layer[last_layer_idx][j]
+                    eq_val = 1 if token_i == token_final else 0
+                    equal_final_token_per_layer[i].append(eq_val)
             analysis_data = {
                 "max_prob": max_probs_per_layer,
                 "entropy": entropy_per_layer,
@@ -222,6 +232,7 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
                 "kl_div": kl_per_layer,
                 "topk_prob_diff": topk_prob_diff_per_layer,
                 "most_likely_token": most_likely_tokens_per_layer,
+                "equal_final_token": equal_final_token_per_layer,
             }
 
         return GenerationStrategyResult(

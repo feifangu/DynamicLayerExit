@@ -11,12 +11,13 @@ import logging
 import os
 import random
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import arguments
 
 import torch
 import transformers
+import xlsxwriter
 from arguments import Arguments, simple_parse_args_string
 
 from data import get_data, LowercaseProcessingFunction
@@ -174,6 +175,135 @@ class EvaluationMetrics:
         )
 
 
+def _accumulate_analysis_data(
+    all_data: Dict[str, List[List[float]]],
+    new_data: Dict[str, List[List[float]]],
+    sample_idx: int,
+):
+    """
+    Merge one sample's analysis_data into the global all_data structure.
+
+    new_data[metric_name] is shape [num_layers][num_tokens].
+      - new_data[metric_name][i] => list of length num_tokens for layer i
+
+    We want all_data[metric_name] to become a big list of rows, each row shape:
+      [layer_index, sample_idx, val_0, val_1, ... val_(num_tokens-1)]
+
+    We'll store the numeric layer_index here, so we can do row labeling (e.g. "layer_003")
+    at write time.
+    """
+    for metric_name, submatrix in new_data.items():
+        # Ensure we have a list-of-rows in all_data for this metric
+        if metric_name not in all_data:
+            all_data[metric_name] = []
+        # submatrix is shape [num_layers][num_tokens]
+        num_layers = len(submatrix)
+        for layer_i in range(num_layers):
+            row_values = submatrix[layer_i]  # list of length num_tokens
+            # Prepend [layer_i, sample_idx], then all the token values
+            # We'll store them as float. For "most_likely_token", they're strings, but let's unify below.
+            # Actually, "most_likely_token" is a list of strings, so let's handle that carefully:
+            if (
+                isinstance(row_values, list)
+                and len(row_values) > 0
+                and isinstance(row_values[0], str)
+            ):
+                # It's the "most_likely_token"
+                # We'll store them in a list-of-strings row
+                # e.g. [layer_i, sample_idx, "the", "world", ...]
+                row = [layer_i, sample_idx] + row_values
+            else:
+                # It's numeric data
+                row = [layer_i, sample_idx] + [float(x) for x in row_values]
+            all_data[metric_name].append(row)
+
+
+def _write_stacked_metric_sheet(
+    workbook: xlsxwriter.Workbook,
+    sheet_name: str,
+    all_rows: List[List],
+):
+    """
+    all_rows => a list of rows, each row shape: [layer_i, sample_idx, val0, val1, ..., valN].
+    We'll produce an Excel sheet with:
+      - row 0 => column headers: ["", "sample_idx", f"{sheet_name}_000", f"{sheet_name}_001", ...]
+      - subsequent rows:
+         col0 => "layer_{layer_i:03d}"
+         col1 => sample_idx
+         col2.. => the values
+    """
+    worksheet = workbook.add_worksheet(sheet_name)
+    if not all_rows:
+        return
+
+    # We assume each row in all_rows has the same length
+    # e.g. row = [layer_i, sample_idx, val0, val1, ..., valN]
+    num_cols = len(all_rows[0])
+
+    # The first 2 columns are "layer_i" and "sample_idx"
+    # The rest are the token positions
+    # => so we have (num_cols - 2) token positions
+    num_tokens = num_cols - 2
+
+    # row 0 => column headers
+    # col0 => blank
+    # col1 => "sample_idx"
+    # col2.. => f"{sheet_name}_{000..}"
+    worksheet.write(0, 0, "sample_idx")  # top-left corner
+    worksheet.write(0, 1, "layer")
+    for j in range(num_tokens):
+        worksheet.write(0, j + 2, f"{sheet_name}_{j:03d}")
+
+    # Now fill the data
+    for row_idx, row_data in enumerate(all_rows, start=1):
+        # row_data = [layer_i, sample_idx, val0, val1, ... valN]
+        layer_i = row_data[0]
+        sample_i = row_data[1]
+
+        # col0 => row label = layer_{layer_i:03d}
+        worksheet.write(row_idx, 0, sample_i)
+        # col1 => sample_idx
+        worksheet.write(row_idx, 1, f"layer_{layer_i:03d}")
+
+        # For col2.. => the rest of the values
+        for j in range(num_tokens):
+            cell_val = row_data[2 + j]
+            # If it's a string, xlsxwriter handles it; if float, it writes a number
+            worksheet.write(row_idx, j + 2, cell_val)
+
+
+def _save_analysis_to_excel_benchmark(
+    filename: str, analysis_merged: Dict[str, List[List]]
+):
+    """
+    Each key in analysis_merged is a metric: "max_prob", "entropy", ...
+    The value is a big list-of-rows stacked across samples: [ [layer_i, sample_idx, val0, val1, ...], ... ]
+
+    We'll produce one sheet per metric with the row/col headers described above.
+    """
+    if not analysis_merged:
+        return
+
+    workbook = xlsxwriter.Workbook(filename, {"nan_inf_to_errors": True})
+    # We'll create a sheet for each metric
+    # Must handle "most_likely_token" carefully if it has strings
+    for metric_name in [
+        "max_prob",
+        "entropy",
+        "cosine",
+        "kl_div",
+        "topk_prob_diff",
+        "most_likely_token",
+        "equal_final_token",
+    ]:
+        if metric_name not in analysis_merged:
+            continue
+        all_rows = analysis_merged[metric_name]
+        _write_stacked_metric_sheet(workbook, metric_name, all_rows)
+
+    workbook.close()
+
+
 def benchmark(
     model: torch.nn.Module,
     tokenizer: transformers.PreTrainedTokenizerBase,
@@ -182,7 +312,9 @@ def benchmark(
     seed=None,
 ):
     if generation_config.generation_strategy == "autoregressive":
-        generation_strategy: GenerationStrategy = AutoRegressiveGenerationStrategy()
+        generation_strategy: GenerationStrategy = AutoRegressiveGenerationStrategy(
+            tokenizer=tokenizer
+        )
     elif generation_config.generation_strategy == "self_speculative":
         generation_strategy: GenerationStrategy = SelfSpeculativeGenerationStrategy()
     elif generation_config.generation_strategy == "dynamic_early_exit_first":
@@ -212,6 +344,11 @@ def benchmark(
         data_path=benchmark_arguments.data_path,
     )
     metrics = EvaluationMetrics.build_metrics()
+
+    # We'll accumulate the layer-wise data across samples
+    # e.g. analysis_merged["max_prob"] => big list of rows
+    analysis_merged: Dict[str, List[List]] = {}
+
     for i, example in enumerate(tqdm(evaluation_set)):
         response: GenerationResult = generator.generate(
             prompt=example.input,
@@ -226,9 +363,20 @@ def benchmark(
             continue
         metrics.update(example, response)
 
+        # If there's layer-wise analysis data, accumulate it
+        if (
+            generation_config.analysis
+            and response.generation_strategy_result.analysis_data is not None
+        ):
+            _accumulate_analysis_data(
+                analysis_merged,
+                response.generation_strategy_result.analysis_data,
+                sample_idx=i,
+            )
+
     metric_result = metrics.compute()
 
-    return metric_result
+    return metric_result, analysis_merged
 
 
 def main(
@@ -251,7 +399,9 @@ def main(
     # Setup and Run Benchmark
     setup(args, device=device)
     model, tokenizer = load_model_and_tokenizer(args, device=device)
-    metric_result = benchmark(model, tokenizer, benchmark_arguments, generation_config)
+    metric_result, analysis_merged = benchmark(
+        model, tokenizer, benchmark_arguments, generation_config
+    )
     print(metric_result)
 
     # Save config and results to file
@@ -260,6 +410,15 @@ def main(
         json.dump(benchmark_arguments.__dict__, f)
         json.dump(generation_config.__dict__, f)
         json.dump(metric_result, f)
+
+    # If we have analysis data from multiple samples, write it to Excel
+    if generation_config.analysis and analysis_merged:
+        excel_path = os.path.join(
+            args.output_dir,
+            f"benchmark_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+        )
+        _save_analysis_to_excel_benchmark(excel_path, analysis_merged)
+        print(f"Layer-wise analysis for all samples saved to: {excel_path}")
 
 
 def process_cli_arguments() -> (

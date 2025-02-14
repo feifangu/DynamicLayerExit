@@ -135,6 +135,7 @@ def save_analysis_to_excel(filename: str, analysis_data: dict):
       'kl_div':   [[...], ...],
       'topk_prob_diff': [[...], ...],
       'most_likely_token': [[...], ...],
+      'equal_final_token': [[...], ...],
       ...
     }
     """
@@ -150,6 +151,7 @@ def save_analysis_to_excel(filename: str, analysis_data: dict):
         "kl_div",
         "topk_prob_diff",
         "most_likely_token",
+        "equal_final_token",
     ]:
         if metric_name not in analysis_data:
             continue
