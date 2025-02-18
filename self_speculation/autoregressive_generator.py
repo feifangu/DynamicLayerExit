@@ -90,6 +90,8 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
         kl_per_layer = [] if generation_config.analysis else None
         topk_prob_diff_per_layer = [] if generation_config.analysis else None
         most_likely_tokens_per_layer = [] if generation_config.analysis else None
+        logits_max_per_layer = [] if generation_config.analysis else None
+        logits_std_per_layer = [] if generation_config.analysis else None
 
         num_layers = None
         k_for_topk = 15
@@ -127,6 +129,8 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
                     kl_per_layer = [[] for _ in range(num_layers)]
                     topk_prob_diff_per_layer = [[] for _ in range(num_layers)]
                     most_likely_tokens_per_layer = [[] for _ in range(num_layers)]
+                    logits_max_per_layer = [[] for _ in range(num_layers)]
+                    logits_std_per_layer = [[] for _ in range(num_layers)]
 
                 # partial_probs[i] => distribution for layer i
                 # partial_logits[i] => logits for layer i
@@ -137,6 +141,13 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
                     ]  # shape [1, vocab_size]
                     p_max = float(p_i.max().item())
                     max_probs_per_layer[layer_i].append(p_max)
+
+                    # ============== NEW 1: max_logits ==============
+                    log_i_max = float(log_i.max().item())
+                    logits_max_per_layer[layer_i].append(log_i_max)
+
+                    log_i_std = float(log_i.std().item())
+                    logits_std_per_layer[layer_i].append(log_i_std)
 
                     # eps = 1e-9
                     # p_clamp = p_i.clamp(min=eps)
@@ -231,6 +242,8 @@ class AutoRegressiveGenerationStrategy(GenerationStrategy):
                 "cosine": cosine_per_layer,
                 "kl_div": kl_per_layer,
                 "topk_prob_diff": topk_prob_diff_per_layer,
+                "logits_max": logits_max_per_layer,
+                "logits_std": logits_std_per_layer,
                 "most_likely_token": most_likely_tokens_per_layer,
                 "equal_final_token": equal_final_token_per_layer,
             }

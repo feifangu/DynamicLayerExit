@@ -125,7 +125,7 @@ def sweep(
                     generation_config.threshold = threshold
                     generation_config.num_speculations = num_speculations
 
-                    metric_result = benchmark(
+                    metric_result, _ = benchmark(
                         model,
                         tokenizer,
                         benchmark_arguments,

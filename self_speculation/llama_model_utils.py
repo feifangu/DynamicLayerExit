@@ -533,6 +533,7 @@ def optimized_forward_early(
     exit_layer = len(model.model.layers) - 1  # Default to last layer
 
     check_interval = max(1, math.floor(len(model.model.layers) / 5))
+    # check_interval = 1
 
     for idx, decoder_layer in enumerate(model.model.layers[:-1]):
         hidden_states, past_key_values = decoder_layer(
@@ -567,6 +568,7 @@ def optimized_forward_early(
 
             elif dynamic_method == "max_prob":
                 current_probs = torch.softmax(current_logits[:, -1], dim=-1)
+                # confidence = torch.max(current_logits[:, -1])  # Get max probability
                 confidence = torch.max(current_probs)  # Get max probability
 
                 if confidence > threshold:

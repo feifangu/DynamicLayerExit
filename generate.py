@@ -134,6 +134,8 @@ def save_analysis_to_excel(filename: str, analysis_data: dict):
       'cosine':   [[...], ...],
       'kl_div':   [[...], ...],
       'topk_prob_diff': [[...], ...],
+      'logits_max':   [[...], ...],
+      'logits_std': [[...], ...],
       'most_likely_token': [[...], ...],
       'equal_final_token': [[...], ...],
       ...
@@ -150,6 +152,8 @@ def save_analysis_to_excel(filename: str, analysis_data: dict):
         "cosine",
         "kl_div",
         "topk_prob_diff",
+        "logits_max",
+        "logits_std",
         "most_likely_token",
         "equal_final_token",
     ]:
@@ -183,9 +187,12 @@ def main(
             raise ValueError(f"Unsupported streamer type {generate_arguments.streamer}")
 
     if generation_config.generation_strategy == "autoregressive":
-        generation_strategy: GenerationStrategy = AutoRegressiveGenerationStrategy(
-            tokenizer=tokenizer
-        )
+        if generation_config.analysis:
+            # If we want analysis, we pass the tokenizer so partial tokens can be decoded
+            generation_strategy = AutoRegressiveGenerationStrategy(tokenizer=tokenizer)
+        else:
+            # If analysis=False, pass tokenizer=None. The strategy won't do partial forward analysis.
+            generation_strategy = AutoRegressiveGenerationStrategy(tokenizer=None)
     elif generation_config.generation_strategy == "self_speculative":
         generation_strategy: GenerationStrategy = SelfSpeculativeGenerationStrategy()
     elif generation_config.generation_strategy == "dynamic_early_exit_first":
