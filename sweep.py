@@ -82,7 +82,7 @@ def sweep(
                 generation_config.exit_layer = exit_layer
                 generation_config.num_speculations = num_speculations
 
-                metric_result = benchmark(
+                metric_result, _ = benchmark(
                     model, tokenizer, benchmark_arguments, generation_config, args.seed
                 )
 
