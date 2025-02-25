@@ -66,8 +66,13 @@ def sweep(
 
     os.makedirs(args.output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_fname = f"{args.output_dir}/sweep_{timestamp}.csv"
-    pdf_fname = f"{args.output_dir}/sweep_{timestamp}.pdf"
+    model_name_parts = args.model.split("/")[-1].split("-")
+    model_name = "-".join(model_name_parts[-2:])
+    dataset_name = benchmark_arguments.dataset
+    csv_fname = f"{args.output_dir}/sweep_{model_name}_{dataset_name}_{timestamp}.csv"
+    pdf_fname = f"{args.output_dir}/sweep_{model_name}_{dataset_name}_{timestamp}.pdf"
+    # print(benchmark_arguments.dataset, args.model)
+    # print(csv_fname)
     if generation_config.generation_strategy == "self_speculative":
         for exit_layer in range(
             sweep_arguments.exit_layer_first,
@@ -102,7 +107,10 @@ def sweep(
                 print(
                     f"exit_layer: {exit_layer}, num_speculations: {num_speculations}, time_per_token: {metric_result['time_per_token']['mean']}"
                 )
-    elif generation_config.generation_strategy in ("dynamic_early_exit_first", "dynamic_early_exit_max"):
+    elif generation_config.generation_strategy in (
+        "dynamic_early_exit_first",
+        "dynamic_early_exit_max",
+    ):
         for min_layer in range(
             sweep_arguments.min_layer_first,
             sweep_arguments.min_layer_last + 1,
