@@ -74,8 +74,11 @@ def sweep(
 
     os.makedirs(args.output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    csv_fname = f"{args.output_dir}/sweep_{timestamp}.csv"
-    pdf_fname = f"{args.output_dir}/sweep_{timestamp}.pdf"
+    model_name_parts = args.model.split("/")[-1].split("-")
+    model_name = "-".join(model_name_parts[-2:])
+    dataset_name = benchmark_arguments.dataset
+    csv_fname = f"{args.output_dir}/sweep_{model_name}_{dataset_name}_{timestamp}.csv"
+    pdf_fname = f"{args.output_dir}/sweep_{model_name}_{dataset_name}_{timestamp}.pdf"
     if generation_config.generation_strategy == "self_speculative":
         for exit_layer in range(
             sweep_arguments.exit_layer_first,
