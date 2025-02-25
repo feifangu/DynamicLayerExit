@@ -157,23 +157,26 @@ def sweep(
                                     "threshold": threshold,
                                     "max_layer": max_layer,
                                     "check_interval": check_interval,
-                                    "acceptance_rate": metric_result["acceptance_rate"]["mean"],
+                                    "acceptance_rate": metric_result["acceptance_rate"][
+                                        "mean"
+                                    ],
                                     "total_time": metric_result["total_time"]["mean"],
-                                    "time_per_token": metric_result["time_per_token"]["mean"],
-                                    "tokens_per_second": metric_result["tokens_per_second"][
+                                    "time_per_token": metric_result["time_per_token"][
                                         "mean"
                                     ],
-                                    "average_exit_layer": metric_result["avg_exit_layer"][
-                                        "mean"
-                                    ],
+                                    "tokens_per_second": metric_result[
+                                        "tokens_per_second"
+                                    ]["mean"],
+                                    "average_exit_layer": metric_result[
+                                        "avg_exit_layer"
+                                    ]["mean"],
                                 }
                             )
                             df = pd.DataFrame(results)
                             # Update table every iteration
                             df.to_csv(csv_fname, index=False)
                             print(
-                                f"min_layer: {min_layer}, threshold: {threshold}, num_speculations: {num_speculations}, max_layer: {max_layer}, check_interval: {check_interval},
-                                tokens_per_second: {metric_result['tokens_per_second']['mean']}, time_per_token: {metric_result['time_per_token']['mean'], average_exit_layer: {metric_result['avg_exit_layer']['mean']}"
+                                f"min_layer: {min_layer}, threshold: {threshold}, num_speculations: {num_speculations}, max_layer: {max_layer}, check_interval: {check_interval},tokens_per_second: {metric_result['tokens_per_second']['mean']}, time_per_token: {metric_result['time_per_token']['mean']}, average_exit_layer: {metric_result['avg_exit_layer']['mean']}"
                             )
 
     elif generation_config.generation_strategy == "dynamic_early_exit_max":
