@@ -5,12 +5,13 @@
 # LICENSE file in the root directory of this source tree.
 #
 
+import math
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
 import torch
 import transformers
-import math
+
 
 @dataclass
 class GenerationState:
@@ -21,11 +22,13 @@ class GenerationState:
     token: int
     confidence: float
 
+
 @dataclass
 class ForwardResult:
     logits: torch.Tensor
     past_key_values: Optional[List[Tuple[torch.Tensor, torch.Tensor]]]
     exit_query_cache: Optional[List[torch.Tensor]] = None
+
 
 @dataclass
 class OptimizedForwardResult:
@@ -34,8 +37,11 @@ class OptimizedForwardResult:
     exit_query_cache: Optional[List[torch.Tensor]] = None
     exit_layer: Optional[int] = None
 
+
 # Copied from transformers.models.bart.modeling_bart.BartDecoder._prepare_decoder_attention_mask
-def _prepare_decoder_attention_mask(model, attention_mask, input_shape, inputs_embeds, past_key_values_length):
+def _prepare_decoder_attention_mask(
+    model, attention_mask, input_shape, inputs_embeds, past_key_values_length
+):
     # create causal mask
     # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
     combined_attention_mask = None
@@ -49,18 +55,24 @@ def _prepare_decoder_attention_mask(model, attention_mask, input_shape, inputs_e
 
     if attention_mask is not None:
         # [bsz, seq_len] -> [bsz, 1, tgt_seq_len, src_seq_len]
-        expanded_attn_mask = _expand_mask(attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]).to(
-            inputs_embeds.device
-        )
+        expanded_attn_mask = _expand_mask(
+            attention_mask, inputs_embeds.dtype, tgt_len=input_shape[-1]
+        ).to(inputs_embeds.device)
         combined_attention_mask = (
-            expanded_attn_mask if combined_attention_mask is None else expanded_attn_mask + combined_attention_mask
+            expanded_attn_mask
+            if combined_attention_mask is None
+            else expanded_attn_mask + combined_attention_mask
         )
 
     return combined_attention_mask
 
+
 # Copied from transformers.models.bart.modeling_bart._make_causal_mask
 def _make_causal_mask(
-    input_ids_shape: torch.Size, dtype: torch.dtype, device: torch.device, past_key_values_length: int = 0
+    input_ids_shape: torch.Size,
+    dtype: torch.dtype,
+    device: torch.device,
+    past_key_values_length: int = 0,
 ):
     """
     Make causal mask used for bi-directional self-attention.
@@ -72,8 +84,19 @@ def _make_causal_mask(
     mask = mask.to(dtype)
 
     if past_key_values_length > 0:
-        mask = torch.cat([torch.zeros(tgt_len, past_key_values_length, dtype=dtype, device=device), mask], dim=-1)
-    return mask[None, None, :, :].expand(bsz, 1, tgt_len, tgt_len + past_key_values_length)
+        mask = torch.cat(
+            [
+                torch.zeros(
+                    tgt_len, past_key_values_length, dtype=dtype, device=device
+                ),
+                mask,
+            ],
+            dim=-1,
+        )
+    return mask[None, None, :, :].expand(
+        bsz, 1, tgt_len, tgt_len + past_key_values_length
+    )
+
 
 # Copied from transformers.models.bart.modeling_bart._expand_mask
 def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] = None):
@@ -87,7 +110,10 @@ def _expand_mask(mask: torch.Tensor, dtype: torch.dtype, tgt_len: Optional[int] 
 
     inverted_mask = 1.0 - expanded_mask
 
-    return inverted_mask.masked_fill(inverted_mask.to(torch.bool), torch.finfo(dtype).min)
+    return inverted_mask.masked_fill(
+        inverted_mask.to(torch.bool), torch.finfo(dtype).min
+    )
+
 
 def top_k_top_p_filtering(
     logits: torch.FloatTensor,
@@ -112,16 +138,21 @@ def top_k_top_p_filtering(
     From: https://gist.github.com/thomwolf/1a5a29f6962089e871b94cbd09daf317
     """
     if top_k > 0:
-        logits = transformers.generation.logits_process.TopKLogitsWarper(top_k=top_k, filter_value=filter_value, min_tokens_to_keep=min_tokens_to_keep)(
-            None, logits
-        )
+        logits = transformers.generation.logits_process.TopKLogitsWarper(
+            top_k=top_k,
+            filter_value=filter_value,
+            min_tokens_to_keep=min_tokens_to_keep,
+        )(None, logits)
 
     if 0 <= top_p <= 1.0:
-        logits = transformers.generation.logits_process.TopPLogitsWarper(top_p=top_p, filter_value=filter_value, min_tokens_to_keep=min_tokens_to_keep)(
-            None, logits
-        )
+        logits = transformers.generation.logits_process.TopPLogitsWarper(
+            top_p=top_p,
+            filter_value=filter_value,
+            min_tokens_to_keep=min_tokens_to_keep,
+        )(None, logits)
 
     return logits
+
 
 def decode_next_token(
     logits: torch.Tensor,
@@ -140,7 +171,9 @@ def decode_next_token(
     else:
         if not token_idx:
             logits.squeeze_(dim=0)
-        filtered_logits = top_k_top_p_filtering(logits / temperature, top_k=top_k, top_p=top_p)
+        filtered_logits = top_k_top_p_filtering(
+            logits / temperature, top_k=top_k, top_p=top_p
+        )
         probabilities = torch.nn.functional.softmax(filtered_logits, dim=-1)
         next_token = torch.multinomial(probabilities, num_samples=1)
         if not token_idx:
@@ -154,7 +187,11 @@ def crop_past_key_values(
 ) -> List[Tuple[torch.Tensor, torch.Tensor]]:
     new_past: List[Tuple[torch.Tensor, torch.Tensor]] = []
     for idx in range(len(past_key_values)):
-        if past_key_values[idx] is None or past_key_values[idx][0] == [] or past_key_values[idx][0] is None:
+        if (
+            past_key_values[idx] is None
+            or past_key_values[idx][0] == []
+            or past_key_values[idx][0] is None
+        ):
             break
         new_past.append(
             (
@@ -183,7 +220,9 @@ def forward(
     if past_key_values is not None:
         past_key_values_length = past_key_values[0][0].shape[2]
         seq_length_with_past = seq_length_with_past + past_key_values_length
-    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(past_key_values)
+    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(
+        past_key_values
+    )
 
     position_ids = torch.arange(
         past_key_values_length,
@@ -221,9 +260,7 @@ def forward(
     hidden_states = model.model.norm(hidden_states)
     logits = model.lm_head(hidden_states)
 
-    return ForwardResult(
-        logits=logits, past_key_values=past_key_values
-    )
+    return ForwardResult(logits=logits, past_key_values=past_key_values)
 
 
 # TODO: update forward_early(...) to use transformers' new KV cache implementation rather than legacy.
@@ -243,7 +280,9 @@ def forward_early(
     if past_key_values is not None:
         past_key_values_length = past_key_values[0][0].shape[2]
         seq_length_with_past = seq_length_with_past + past_key_values_length
-    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(past_key_values)
+    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(
+        past_key_values
+    )
 
     position_ids = torch.arange(
         past_key_values_length,
@@ -289,7 +328,9 @@ def forward_early(
 
     logits = model.lm_head(hidden_states)
     return ForwardResult(
-        logits=logits, past_key_values=past_key_values, exit_query_cache=exit_query_cache
+        logits=logits,
+        past_key_values=past_key_values,
+        exit_query_cache=exit_query_cache,
     )
 
 
@@ -322,7 +363,9 @@ def forward_remainder(
             full_past_key_values_length = 0
 
         seq_length_with_past = num_tokens_to_generate + draft_past_key_values_length
-    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(past_key_values)
+    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(
+        past_key_values
+    )
 
     inputs_embeds = model.model.embed_tokens(input_ids)
 
@@ -404,7 +447,9 @@ def forward_remainder(
     logits = model.lm_head(hidden_states)
 
     return ForwardResult(
-        logits=logits, past_key_values=past_key_values, exit_query_cache=exit_query_cache
+        logits=logits,
+        past_key_values=past_key_values,
+        exit_query_cache=exit_query_cache,
     )
 
 
@@ -415,6 +460,8 @@ def optimized_forward_early(
     threshold: float,
     exit_query_cache: Optional[List[torch.Tensor]],
     min_layer: int,
+    max_layer: int,
+    check_interval: int,
     dynamic_method: str,
 ) -> ForwardResult:
     device = input_ids.device
@@ -426,7 +473,9 @@ def optimized_forward_early(
     if past_key_values is not None:
         past_key_values_length = past_key_values[0][0].shape[2]
         seq_length_with_past = seq_length_with_past + past_key_values_length
-    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(past_key_values)
+    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(
+        past_key_values
+    )
 
     position_ids = torch.arange(
         past_key_values_length,
@@ -450,11 +499,12 @@ def optimized_forward_early(
 
     hidden_states = inputs_embeds
     prev_logits = None
-    exit_layer = len(model.model.layers)-1  # Default to last layer
+    # exit_layer = len(model.model.layers)-1  # Default to last layer
+    exit_layer = max_layer  # Default to max layer
 
-    check_interval = max(1, math.floor(len(model.model.layers) / 5))
-    
-    for idx, decoder_layer in enumerate(model.model.layers[:-1]):
+    # check_interval = max(1, math.floor(len(model.model.layers) / 5))
+
+    for idx, decoder_layer in enumerate(model.model.layers[:max_layer]):
         hidden_states, past_key_values = decoder_layer(
             hidden_states,
             attention_mask=attention_mask,
@@ -466,10 +516,8 @@ def optimized_forward_early(
         )
 
         if idx >= min_layer and idx % check_interval == 0:
-
             current_hidden = model.model.norm(hidden_states)
             current_logits = model.lm_head(current_hidden)
-
 
             if dynamic_method == "prob_diff":
                 if prev_logits is not None:
@@ -491,7 +539,7 @@ def optimized_forward_early(
                 current_probs = torch.softmax(current_logits[:, -1], dim=-1)
                 confidence = torch.max(current_probs)  # Get max probability
 
-                if confidence > threshold:
+                if confidence >= threshold:
                     exit_layer = idx + 1
                     break
 
@@ -499,10 +547,9 @@ def optimized_forward_early(
                 probs = torch.softmax(current_logits[:, -1], dim=-1)
                 entropy = -(probs * torch.log(probs)).sum()  # Compute entropy
 
-                if entropy <  threshold:
+                if entropy < threshold:
                     exit_layer = idx + 1
                     break
-  
 
     past_key_values = past_key_values.to_legacy_cache()
 
@@ -514,13 +561,13 @@ def optimized_forward_early(
     hidden_states = model.model.norm(hidden_states)
     logits = model.lm_head(hidden_states)
 
-    #print(f"Exit at layer: {exit_layer}")
-    
+    # print(f"Exit at layer: {exit_layer}")
+
     return OptimizedForwardResult(
-        logits=logits, 
-        past_key_values=past_key_values, 
+        logits=logits,
+        past_key_values=past_key_values,
         exit_query_cache=exit_query_cache,
-        exit_layer=exit_layer
+        exit_layer=exit_layer,
     )
 
 
@@ -544,11 +591,11 @@ def optimized_forward_remainder(
 
         # Find the maximum layer index that has been computed
         max_layer_idx = 0
-        for i in range(len(model.model.layers)-1, -1, -1):
+        for i in range(len(model.model.layers) - 1, -1, -1):
             if i < len(past_key_values) and past_key_values[i] is not None:
                 max_layer_idx = i
                 break
-                
+
         # Get the length of tokens that have gone through full verification
         if max_layer_idx == len(model.model.layers) - 1:
             full_past_key_values_length = past_key_values[max_layer_idx][0].shape[2]
@@ -556,7 +603,9 @@ def optimized_forward_remainder(
             full_past_key_values_length = 0
 
         seq_length_with_past = num_tokens_to_generate + draft_past_key_values_length
-    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(past_key_values)
+    past_key_values = transformers.cache_utils.DynamicCache.from_legacy_cache(
+        past_key_values
+    )
 
     inputs_embeds = model.model.embed_tokens(input_ids)
 
@@ -589,7 +638,7 @@ def optimized_forward_remainder(
 
     hidden_states = inputs_embeds
     full_hidden_states: Optional[torch.FloatTensor] = None
-    
+
     # Process remaining layers for each token based on where it exited
     for idx, decoder_layer in enumerate(model.model.layers):
         past_key_value = (
@@ -597,7 +646,7 @@ def optimized_forward_remainder(
             if (past_key_values is not None and idx < len(past_key_values))
             else None
         )
-        
+
         # For layers that some tokens haven't computed yet
         if idx > max_layer_idx:
             if full_hidden_states is None and exit_query_cache is not None:
@@ -607,7 +656,7 @@ def optimized_forward_remainder(
                 )
             else:
                 full_hidden_states = hidden_states
-                
+
             hidden_states, past_key_values = decoder_layer(
                 full_hidden_states,
                 attention_mask=full_attention_mask,
@@ -638,5 +687,5 @@ def optimized_forward_remainder(
     return ForwardResult(
         logits=logits,
         past_key_values=past_key_values,
-        exit_query_cache=exit_query_cache
+        exit_query_cache=exit_query_cache,
     )

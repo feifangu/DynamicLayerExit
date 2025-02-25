@@ -52,6 +52,14 @@ class SweepArguments:
     min_layer_last: Optional[int] = 15
     min_layer_step: Optional[int] = 1
 
+    max_layer_first: Optional[int] = 1
+    max_layer_last: Optional[int] = 15
+    max_layer_step: Optional[int] = 1
+
+    check_interval_first: Optional[int] = 1
+    check_interval_last: Optional[int] = 15
+    check_interval_step: Optional[int] = 1
+
 
 def sweep(
     args: Arguments,
@@ -102,7 +110,73 @@ def sweep(
                 print(
                     f"exit_layer: {exit_layer}, num_speculations: {num_speculations}, time_per_token: {metric_result['time_per_token']['mean']}"
                 )
-    elif generation_config.generation_strategy in ("dynamic_early_exit_first", "dynamic_early_exit_max"):
+    elif generation_config.generation_strategy == "dynamic_early_exit_first":
+        for min_layer in range(
+            sweep_arguments.min_layer_first,
+            sweep_arguments.min_layer_last + 1,
+            sweep_arguments.min_layer_step,
+        ):
+            for threshold in np.arange(
+                sweep_arguments.threshold_first,
+                sweep_arguments.threshold_last + sweep_arguments.threshold_step,
+                sweep_arguments.threshold_step,
+            ):
+                for num_speculations in range(
+                    sweep_arguments.num_speculations_first,
+                    sweep_arguments.num_speculations_last + 1,
+                    sweep_arguments.num_speculations_step,
+                ):
+                    for max_layer in range(
+                        sweep_arguments.max_layer_first,
+                        sweep_arguments.max_layer_last + 1,
+                        sweep_arguments.max_layer_step,
+                    ):
+                        for check_interval in range(
+                            sweep_arguments.check_interval_first,
+                            sweep_arguments.check_interval_last + 1,
+                            sweep_arguments.check_interval_step,
+                        ):
+                            generation_config.min_layer = min_layer
+                            generation_config.threshold = threshold
+                            generation_config.num_speculations = num_speculations
+                            generation_config.max_layer = max_layer
+                            generation_config.check_interval = check_interval
+
+                            metric_result = benchmark(
+                                model,
+                                tokenizer,
+                                benchmark_arguments,
+                                generation_config,
+                                args.seed,
+                            )
+
+                            results.append(
+                                {
+                                    "min_layer": min_layer,
+                                    "num_speculations": num_speculations,
+                                    "threshold": threshold,
+                                    "max_layer": max_layer,
+                                    "check_interval": check_interval,
+                                    "acceptance_rate": metric_result["acceptance_rate"]["mean"],
+                                    "total_time": metric_result["total_time"]["mean"],
+                                    "time_per_token": metric_result["time_per_token"]["mean"],
+                                    "tokens_per_second": metric_result["tokens_per_second"][
+                                        "mean"
+                                    ],
+                                    "average_exit_layer": metric_result["avg_exit_layer"][
+                                        "mean"
+                                    ],
+                                }
+                            )
+                            df = pd.DataFrame(results)
+                            # Update table every iteration
+                            df.to_csv(csv_fname, index=False)
+                            print(
+                                f"min_layer: {min_layer}, threshold: {threshold}, num_speculations: {num_speculations}, max_layer: {max_layer}, check_interval: {check_interval},
+                                tokens_per_second: {metric_result['tokens_per_second']['mean']}, time_per_token: {metric_result['time_per_token']['mean'], average_exit_layer: {metric_result['avg_exit_layer']['mean']}"
+                            )
+
+    elif generation_config.generation_strategy == "dynamic_early_exit_max":
         for min_layer in range(
             sweep_arguments.min_layer_first,
             sweep_arguments.min_layer_last + 1,
