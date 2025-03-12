@@ -499,10 +499,16 @@ def optimized_forward_early(
 
     hidden_states = inputs_embeds
     prev_logits = None
-    # exit_layer = len(model.model.layers)-1  # Default to last layer
-    exit_layer = max_layer  # Default to max layer
+    exit_layer = len(model.model.layers) - 1  # Default to last layer
+    max_layer = (
+        max_layer if max_layer > 0 else len(model.model.layers)
+    )  # Default to max layer
 
-    # check_interval = max(1, math.floor(len(model.model.layers) / 5))
+    check_interval = (
+        check_interval
+        if check_interval > 0
+        else max(1, math.floor(len(model.model.layers) / 5))
+    )
 
     for idx, decoder_layer in enumerate(model.model.layers[:max_layer]):
         hidden_states, past_key_values = decoder_layer(
@@ -545,8 +551,11 @@ def optimized_forward_early(
 
             elif dynamic_method == "prob_entropy":
                 probs = torch.softmax(current_logits[:, -1], dim=-1)
-                entropy = -(probs * torch.log(probs)).sum()  # Compute entropy
-
+                p = probs.float()  # cast to float32
+                p = p.clamp(min=1e-9)  # avoid log(0)
+                entropy = -(p * p.log()).sum()
+                # entropy = -(probs * torch.log(probs)).sum()  # Compute entropy
+                # print(f"Entropy: {entropy}")
                 if entropy < threshold:
                     exit_layer = idx + 1
                     break
