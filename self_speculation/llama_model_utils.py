@@ -557,16 +557,19 @@ def optimized_forward_early(
 
             elif dynamic_method == "cosine":
                 if prev_logits is not None:
-                    k = 15  # or however many top tokens you want
-                    current_top_values, _ = torch.topk(current_logits[:, -1], k, dim=-1)
-                    last_top_values, _ = torch.topk(prev_logits[:, -1], k, dim=-1)
+                    # k = 15  # or however many top tokens you want
+                    # current_top_values, _ = torch.topk(current_logits[:, -1], k, dim=-1)
+                    # last_top_values, _ = torch.topk(prev_logits[:, -1], k, dim=-1)
 
                     # Convert logits -> probabilities in the top-k subspace
-                    current_probs_topk = torch.softmax(current_top_values, dim=-1)
-                    last_probs_topk = torch.softmax(last_top_values, dim=-1)
+                    # current_probs_topk = torch.softmax(current_top_values, dim=-1)
+                    # last_probs_topk = torch.softmax(last_top_values, dim=-1)
+
+                    current_probs = torch.softmax(current_logits[:, -1], dim=-1)
+                    last_probs = torch.softmax(prev_logits[:, -1], dim=-1)
 
                     # Compute cosine similarity
-                    cos_val = cosine_similarity(current_probs_topk, last_probs_topk)
+                    cos_val = cosine_similarity(current_probs, last_probs)
 
                     # If the distributions are "similar enough", exit
                     # Typically you'd do: if cos_val > threshold => exit
