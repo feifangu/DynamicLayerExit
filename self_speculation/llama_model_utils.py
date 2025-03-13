@@ -203,6 +203,20 @@ def crop_past_key_values(
     return past_key_values
 
 
+def cosine_similarity(a: torch.Tensor, b: torch.Tensor, eps=1e-9) -> float:
+    """
+    Compute cosine similarity between two 1D tensors 'a' and 'b'.
+    Returns a scalar float in the range [-1, 1].
+    """
+    # a, b shape: [k], presumably float32 or float64
+    a = a.float().reshape(-1)  # or .squeeze(0)
+    b = b.float().reshape(-1)
+    denom = (a.norm(2) * b.norm(2)).item()
+    if denom < eps:
+        return 0.0
+    return float(a.dot(b).item() / denom)
+
+
 # Our forward_early(...) and forward_remainder(...) functions currently use transformers library's legacy KV cache implementation that is less efficient.
 # To ensure an apples to apples comparison, we created this forward function to use in autoregressive decoding to ensure it uses the same KV cache implementation instead.
 # FIXME: update forward_early(...) and forward_remainder(...) to use the updated more efficient KV cache implementation.
@@ -540,6 +554,27 @@ def optimized_forward_early(
                         exit_layer = idx + 1
                         break
                 prev_logits = current_logits  # Update previous logits
+
+            elif dynamic_method == "cosine":
+                if prev_logits is not None:
+                    k = 15  # or however many top tokens you want
+                    current_top_values, _ = torch.topk(current_logits[:, -1], k, dim=-1)
+                    last_top_values, _ = torch.topk(prev_logits[:, -1], k, dim=-1)
+
+                    # Convert logits -> probabilities in the top-k subspace
+                    current_probs_topk = torch.softmax(current_top_values, dim=-1)
+                    last_probs_topk = torch.softmax(last_top_values, dim=-1)
+
+                    # Compute cosine similarity
+                    cos_val = cosine_similarity(current_probs_topk, last_probs_topk)
+
+                    # If the distributions are "similar enough", exit
+                    # Typically you'd do: if cos_val > threshold => exit
+                    if cos_val > threshold:
+                        exit_layer = idx + 1
+                        break
+
+                prev_logits = current_logits
 
             elif dynamic_method == "max_prob":
                 current_probs = torch.softmax(current_logits[:, -1], dim=-1)
