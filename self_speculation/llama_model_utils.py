@@ -555,7 +555,7 @@ def optimized_forward_early(
                         break
                 prev_logits = current_logits  # Update previous logits
 
-            elif dynamic_method == "embedding_cosine":
+            elif dynamic_method == "prob_cosine":
                 current_hidden = model.model.norm(hidden_states)
                 current_logits = model.lm_head(current_hidden)
                 if prev_logits is not None:
