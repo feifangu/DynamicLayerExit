@@ -555,43 +555,29 @@ def optimized_forward_early(
                         break
                 prev_logits = current_logits  # Update previous logits
 
-            elif dynamic_method == "max_prob":
-                current_hidden = model.model.norm(hidden_states)
-                current_logits = model.lm_head(current_hidden)
-                current_probs = torch.softmax(current_logits[:, -1], dim=-1)
-                # confidence = torch.max(current_logits[:, -1])  # Get max probability
-                confidence = torch.max(current_probs)  # Get max probability
-
-                if confidence > threshold:
-                    exit_layer = idx + 1
-                    break
-
-            elif dynamic_method == "prob_entropy":
-                current_hidden = model.model.norm(hidden_states)
-                current_logits = model.lm_head(current_hidden)
-                probs = torch.softmax(current_logits[:, -1], dim=-1)
-                entropy = -(probs * torch.log(probs)).sum()  # Compute entropy
-
-                if entropy < threshold:
-                    exit_layer = idx + 1
-                    break
-            elif dynamic_method == "prob_cosine":
+            elif dynamic_method == "embedding_cosine":
                 current_hidden = model.model.norm(hidden_states)
                 current_logits = model.lm_head(current_hidden)
                 if prev_logits is not None:
+                    k = 15  # or however many top tokens you want
+                    current_top_values, _ = torch.topk(current_logits[:, -1], k, dim=-1)
+                    last_top_values, _ = torch.topk(prev_logits[:, -1], k, dim=-1)
                     # k = 15  # or however many top tokens you want
                     # current_top_values, _ = torch.topk(current_logits[:, -1], k, dim=-1)
                     # last_top_values, _ = torch.topk(prev_logits[:, -1], k, dim=-1)
 
                     # Convert logits -> probabilities in the top-k subspace
+                    current_probs_topk = torch.softmax(current_top_values, dim=-1)
+                    last_probs_topk = torch.softmax(last_top_values, dim=-1)
                     # current_probs_topk = torch.softmax(current_top_values, dim=-1)
                     # last_probs_topk = torch.softmax(last_top_values, dim=-1)
 
-                    current_probs = torch.softmax(current_logits[:, -1], dim=-1)
-                    last_probs = torch.softmax(prev_logits[:, -1], dim=-1)
+                    # current_probs = torch.softmax(current_logits[:, -1], dim=-1)
+                    # last_probs = torch.softmax(prev_logits[:, -1], dim=-1)
 
                     # Compute cosine similarity
-                    cos_val = cosine_similarity(current_probs, last_probs)
+                    cos_val = cosine_similarity(current_probs_topk, last_probs_topk)
+                    # cos_val = cosine_similarity(current_probs, last_probs)
 
                     # If the distributions are "similar enough", exit
                     # Typically you'd do: if cos_val > threshold => exit
@@ -600,6 +586,30 @@ def optimized_forward_early(
                         break
 
                 prev_logits = current_logits
+
+            elif dynamic_method == "max_prob":
+                current_hidden = model.model.norm(hidden_states)
+                current_logits = model.lm_head(current_hidden)
+                current_probs = torch.softmax(current_logits[:, -1], dim=-1)
+                confidence = torch.max(current_probs)  # Get max probability
+
+                if confidence >= threshold:
+                    exit_layer = idx + 1
+                    break
+
+            elif dynamic_method == "prob_entropy":
+                current_hidden = model.model.norm(hidden_states)
+                current_logits = model.lm_head(current_hidden)
+                probs = torch.softmax(current_logits[:, -1], dim=-1)
+                p = probs.float()  # cast to float32
+                p = p.clamp(min=1e-9)  # avoid log(0)
+                entropy = -(p * p.log()).sum()
+                # entropy = -(probs * torch.log(probs)).sum()  # Compute entropy
+                # print(f"Entropy: {entropy}")
+                if entropy < threshold:
+                    exit_layer = idx + 1
+                    break
+
             elif dynamic_method == "embedding_cosine":
                 if prev_hidden is not None:
                     cos_val = cosine_similarity(
@@ -608,8 +618,6 @@ def optimized_forward_early(
                     if cos_val > threshold:
                         exit_layer = idx + 1
                         break
-
-                prev_hidden = hidden_states.clone().detach()
 
     past_key_values = past_key_values.to_legacy_cache()
 
