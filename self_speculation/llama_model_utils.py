@@ -514,11 +514,12 @@ def optimized_forward_early(
     hidden_states = inputs_embeds
     prev_hidden = None
     prev_logits = None
-    exit_layer = len(model.model.layers) - 1  # Default to last layer
+
     max_layer = (
         max_layer if max_layer > 0 else len(model.model.layers)
     )  # Default to max layer
-
+    exit_layer = max_layer
+    
     check_interval = (
         check_interval
         if check_interval > 0
