@@ -526,6 +526,9 @@ def optimized_forward_early(
         else max(1, math.floor(len(model.model.layers) / 5))
     )
 
+    current_logits = None
+    current_probs = None
+    is_criterion_met = False
     for idx, decoder_layer in enumerate(model.model.layers[:max_layer]):
         hidden_states, past_key_values = decoder_layer(
             hidden_states,
@@ -553,6 +556,7 @@ def optimized_forward_early(
 
                     if prob_diff < threshold:
                         exit_layer = idx + 1
+                        is_criterion_met = True
                         break
                 prev_logits = current_logits  # Update previous logits
 
@@ -584,6 +588,7 @@ def optimized_forward_early(
                     # Typically you'd do: if cos_val > threshold => exit
                     if cos_val > threshold:
                         exit_layer = idx + 1
+                        is_criterion_met = True
                         break
 
                 prev_logits = current_logits
@@ -596,6 +601,7 @@ def optimized_forward_early(
 
                 if confidence >= threshold:
                     exit_layer = idx + 1
+                    is_criterion_met = True
                     break
 
             elif dynamic_method == "prob_entropy":
@@ -609,6 +615,7 @@ def optimized_forward_early(
                 # print(f"Entropy: {entropy}")
                 if entropy < threshold:
                     exit_layer = idx + 1
+                    is_criterion_met = True
                     break
 
             elif dynamic_method == "embedding_cosine":
@@ -618,6 +625,7 @@ def optimized_forward_early(
                     )
                     if cos_val > threshold:
                         exit_layer = idx + 1
+                        is_criterion_met = True
                         break
 
     past_key_values = past_key_values.to_legacy_cache()
@@ -627,8 +635,11 @@ def optimized_forward_early(
     else:
         exit_query_cache = torch.cat([exit_query_cache, hidden_states], dim=1)
 
-    hidden_states = model.model.norm(hidden_states)
-    logits = model.lm_head(hidden_states)
+    if is_criterion_met and current_logits is not None:
+        logits = current_logits
+    else:
+        hidden_states = model.model.norm(hidden_states)
+        logits = model.lm_head(hidden_states)
 
     # print(f"Exit at layer: {exit_layer}")
 
