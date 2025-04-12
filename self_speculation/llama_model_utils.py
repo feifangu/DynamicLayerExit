@@ -519,12 +519,14 @@ def optimized_forward_early(
         max_layer if max_layer > 0 else len(model.model.layers) - 1
     )  # Default to max layer
     exit_layer = max_layer
-    
+
     check_interval = (
         check_interval
         if check_interval > 0
         else max(1, math.floor(len(model.model.layers) / 5))
     )
+    final_hidden = None
+    final_logits = None
 
     for idx, decoder_layer in enumerate(model.model.layers[:max_layer]):
         hidden_states, past_key_values = decoder_layer(
@@ -601,13 +603,16 @@ def optimized_forward_early(
             elif dynamic_method == "prob_entropy":
                 current_hidden = model.model.norm(hidden_states)
                 current_logits = model.lm_head(current_hidden)
-                probs = torch.softmax(current_logits[:, -1], dim=-1)
+                k = 15  # or however many top tokens you want
+                current_top_values, _ = torch.topk(current_logits[:, -1], k, dim=-1)
+                probs = torch.softmax(current_top_values, dim=-1)
                 p = probs.float()  # cast to float32
                 p = p.clamp(min=1e-9)  # avoid log(0)
                 entropy = -(p * p.log()).sum()
                 # entropy = -(probs * torch.log(probs)).sum()  # Compute entropy
                 # print(f"Entropy: {entropy}")
                 if entropy < threshold:
+                    final_hidden, final_logits = current_hidden, current_logits
                     exit_layer = idx + 1
                     break
 
@@ -626,14 +631,14 @@ def optimized_forward_early(
         exit_query_cache = hidden_states
     else:
         exit_query_cache = torch.cat([exit_query_cache, hidden_states], dim=1)
-
-    hidden_states = model.model.norm(hidden_states)
-    logits = model.lm_head(hidden_states)
+    if final_logits is None:
+        final_hidden = model.model.norm(hidden_states)
+        final_logits = model.lm_head(final_hidden)
 
     # print(f"Exit at layer: {exit_layer}")
 
     return OptimizedForwardResult(
-        logits=logits,
+        logits=final_logits,
         past_key_values=past_key_values,
         exit_query_cache=exit_query_cache,
         exit_layer=exit_layer,
